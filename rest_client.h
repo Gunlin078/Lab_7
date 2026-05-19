@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QCoreApplication>
 #include <QNetworkAccessManager>
+//#include <QPlainTextDocumentLayout>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
@@ -22,70 +23,86 @@ public:
     //~REST_Client(){delete manager_;}
 
     void outputJsonFromUrl(const QString &userURL, QTextEdit *outputEdit, QTextEdit *errorsEdit,
-                               HttpMethod method = HttpMethod::GET,
-                               const QByteArray &postData = QByteArray()){
+                           HttpMethod method = HttpMethod::GET,
+                           const QByteArray &postData = QByteArray())
+    {
+        switch (method) {
+        case HttpMethod::GET:
+            handleRequest_Get(userURL, outputEdit, errorsEdit);
+            break;
+
+        case HttpMethod::POST:
+            handleRequest_Post(userURL, outputEdit, errorsEdit, postData);
+            break;
+
+        case HttpMethod::PUT:
+            handleRequest_Put(userURL, outputEdit, errorsEdit, postData);
+            break;
+
+        case HttpMethod::DELETE:
+            handleRequest_Delete(userURL, outputEdit, errorsEdit);
+            break;
+        }
+    }
+
+private:
+    QNetworkAccessManager *manager_;
+    void handleRequest_Get   (const QString &userURL, QTextEdit *outputEdit, QTextEdit *errorsEdit){
+        if (!manager_) return;
         outputEdit->clear();
         errorsEdit->clear();
         QUrl url(userURL);
         QNetworkRequest request(url);
         request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        request.setTransferTimeout(30000);
+        request.setTransferTimeout(10000);
 
         QNetworkReply *reply = nullptr;
-
-        switch(method) {
-        case HttpMethod::GET:
-            reply = manager_->get(request);
-            break;
-        case HttpMethod::POST:
-            reply = manager_->post(request, postData);
-            break;
-        case HttpMethod::PUT:
-            reply = manager_->put(request, postData);
-            break;
-        case HttpMethod::DELETE:
-            reply = manager_->deleteResource(request);
-            break;
-        }
+        reply = manager_->get(request);
 
         connect(reply, &QNetworkReply::finished, this, [this, reply, outputEdit, errorsEdit](){
-            if (!this or !manager_) return;
-            if (reply->error() != QNetworkReply::NoError) return;
+            if (!manager_) return;
             QString contentType = reply->header(QNetworkRequest::ContentTypeHeader).toString();
 
-            if (contentType.contains("application/json")) {
-                QByteArray response = reply->readAll();
+            // БЛОК ОШИБОК
+            if (reply->error() != QNetworkReply::NoError or reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()!= 200){ //Код успеха
+            QString httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toString();
+            QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
+            QString errorMsg = getDetailedError(reply->error()) + "\n" +
+                               httpCode + " " + reason;
 
-                QJsonDocument jsonDoc = QJsonDocument::fromJson(response);
+            errorsEdit->setText(errorMsg);
+            qDebug() << "Network error:" << getDetailedError(reply->error());
+            qDebug() << "HTTP status:" << httpCode << reason;
+
+            // БЛОК JSON
+            } else if (contentType.contains("application/json")) {
+                QJsonDocument jsonDoc = QJsonDocument::fromJson(reply->readAll());
                 QString jsonString = jsonDoc.toJson(QJsonDocument::Indented);
                 jsonString.replace("\\n", "\n");
-                outputEdit->setText(jsonString);
 
+                outputEdit->setText(jsonString);
+                errorsEdit->setText("Response type: JSON");
                 qDebug() << "Successfully received, type: JSON";
 
-            } else if (contentType.contains("application/json")) {
-                QByteArray response = reply->readAll();
-                QTextDocument *htmlDoc; htmlDoc->setHtml(response);
-                outputEdit->setDocument(htmlDoc);
+            // БЛОК HTML
+            } else if (contentType.contains("text/html")) {
+                auto *htmlDoc = new QTextDocument(outputEdit);
+                htmlDoc->setHtml(reply->readAll());
+                //htmlDoc->setDocumentLayout(new QPlainTextDocumentLayout(htmlDoc));
+                htmlDoc->clearUndoRedoStacks();
 
+                outputEdit->setDocument(htmlDoc);
+                errorsEdit->setText("Response type: HTML");
                 qDebug() << "Successfully received, type: HTML";
 
-            } else if(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()!= 200){
-                //int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-                QString httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toString();
-                QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
-                errorsEdit->setText(getDetailedError(reply->error()));
-                errorsEdit->append(httpCode);
-                errorsEdit->insertPlainText(reason);
-                qDebug() << "Network error:" << getDetailedError(reply->error());
-                qDebug() << "HTTP status:" << httpCode << reason;
-            }else errorsEdit->setText("Nothing received");
+            } else errorsEdit->setText("Unknown response format");
 
             reply->deleteLater();
         });
     }
-private:
-    QNetworkAccessManager *manager_;
+    void handleRequest_Post  (const QString &url, QTextEdit *output, QTextEdit *errors, const QByteArray &postData = QByteArray()){}
+    void handleRequest_Put   (const QString &url, QTextEdit *output, QTextEdit *errors, const QByteArray &postData = QByteArray()){}
+    void handleRequest_Delete(const QString &url, QTextEdit *output, QTextEdit *errors){}
     QString getDetailedError(QNetworkReply::NetworkError code) {
         switch(code) {
         case QNetworkReply::ConnectionRefusedError:
